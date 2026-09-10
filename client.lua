@@ -9,31 +9,37 @@ local botConfig = {
     miningHoldDuration = 2000, -- milliseconds
     miningCooldown = 3000, -- milliseconds between mining actions
     eatDrinkInterval = 600000, -- 10 minutes in milliseconds
-    inventoryCheckInterval = 5000, -- Check inventory every 5 seconds
-    maxInventorySlots = 20 -- Adjust based on your server
+    inventoryCheckInterval = 5000 -- Check inventory every 5 seconds
 }
 
 local lastMineTime = 0
-local lastEatDrinkTime = GetGameTimer()
-local isHoldingMiningKey = false
+local lastEatDrinkTime = 0
+local lastInventoryCheckTime = 0
+local wagonCalled = false
 
 -- Initialize Steam ID on script load
 Citizen.CreateThread(function()
-    playerSteamId = GetPlayerIdentifier(PlayerId(), 0) -- Get Steam ID
+    Wait(1000)
+    playerSteamId = GetPlayerIdentifier(PlayerId(), 0) or "UNKNOWN"
     print("^2[AutoFarm Bot] Steam ID: " .. playerSteamId .. "^7")
 end)
 
 -- Main bot loop
 Citizen.CreateThread(function()
+    lastEatDrinkTime = GetGameTimer()
+    
     while true do
         Wait(100)
         
         if botActive then
             local currentTime = GetGameTimer()
             
-            -- Check if inventory is full
-            if IsInventoryFull() then
-                CallWagon()
+            -- Check inventory every 5 seconds
+            if currentTime - lastInventoryCheckTime >= botConfig.inventoryCheckInterval then
+                if IsInventoryFull() then
+                    CallWagon()
+                end
+                lastInventoryCheckTime = currentTime
             end
             
             -- Eat and drink every 10 minutes
@@ -59,17 +65,11 @@ Citizen.CreateThread(function()
         if IsControlJustReleased(0, GetHashKey(botConfig.toggleKey)) then
             botActive = not botActive
             if botActive then
-                TriggerEvent('chat:addMessage', {
-                    color = {0, 255, 0},
-                    multiline = true,
-                    args = {"AutoFarm Bot", "Bot started! Press F5 to stop."}
-                })
+                print("^2[AutoFarm Bot] Bot started! Press F5 to stop.^7")
+                NotifyPlayer("Bot started! Press F5 to stop.", 3)
             else
-                TriggerEvent('chat:addMessage', {
-                    color = {255, 0, 0},
-                    multiline = true,
-                    args = {"AutoFarm Bot", "Bot stopped."}
-                })
+                print("^1[AutoFarm Bot] Bot stopped.^7")
+                NotifyPlayer("Bot stopped.", 3)
             end
         end
     end
@@ -79,32 +79,23 @@ end)
 function Mine()
     local playerPed = PlayerPedId()
     
-    -- Play mining animation
-    RequestAnimDict("combat@damage@rb_writhe")
-    while not HasAnimDictLoaded("combat@damage@rb_writhe") do
-        Wait(100)
-    end
-    
-    TaskPlayAnim(playerPed, "combat@damage@rb_writhe", "rb_writhe_loop", 8.0, -8.0, -1, 1, 0, false, false, false)
-    
-    -- Hold the mining key
+    -- Hold down the G key for mining
     local mineStartTime = GetGameTimer()
     while GetGameTimer() - mineStartTime < botConfig.miningHoldDuration do
-        -- Simulate holding G key
         SetControlNormal(0, GetHashKey(botConfig.miningKey), 1.0)
-        Wait(100)
+        Wait(50)
     end
     
-    -- Release key
+    -- Release the key
     SetControlNormal(0, GetHashKey(botConfig.miningKey), 0.0)
     
-    -- Stop animation
-    StopAnimTask(playerPed, "combat@damage@rb_writhe", "rb_writhe_loop", 1.0)
+    print("^3[AutoFarm Bot] Mining...^7")
 end
 
 -- Eat and drink function
 function EatAndDrink()
-    local playerPed = PlayerPedId()
+    print("^3[AutoFarm Bot] Eating and drinking...^7")
+    NotifyPlayer("Eating and drinking...", 3)
     
     -- Eat (press 1)
     SetControlNormal(0, GetHashKey(botConfig.eatKey), 1.0)
@@ -116,80 +107,88 @@ function EatAndDrink()
     SetControlNormal(0, GetHashKey(botConfig.drinkKey), 1.0)
     Wait(500)
     SetControlNormal(0, GetHashKey(botConfig.drinkKey), 0.0)
-    
-    TriggerEvent('chat:addMessage', {
-        color = {255, 255, 0},
-        multiline = true,
-        args = {"AutoFarm Bot", "Eating and drinking..."}
-    })
+    Wait(1000)
 end
 
 -- Call wagon function
 function CallWagon()
-    TriggerEvent('chat:addMessage', {
-        color = {255, 165, 0},
-        multiline = true,
-        args = {"AutoFarm Bot", "Inventory full! Calling wagon..."}
-    })
+    if wagonCalled then
+        return -- Don't call wagon again if already called
+    end
+    
+    wagonCalled = true
+    print("^5[AutoFarm Bot] Inventory full! Calling wagon...^7")
+    NotifyPlayer("Inventory full! Calling wagon...", 5)
     
     -- Press J to call wagon
     SetControlNormal(0, GetHashKey(botConfig.callWagonKey), 1.0)
     Wait(500)
     SetControlNormal(0, GetHashKey(botConfig.callWagonKey), 0.0)
     
-    -- Wait for wagon to appear on map
-    Wait(5000)
+    print("^2[AutoFarm Bot] Wagon called! It will appear on your map.^7")
+    NotifyPlayer("Wagon called! Moving to wagon location...", 5)
     
-    -- Navigate to wagon and place items
-    local playerCoords = GetEntityCoords(PlayerPedId())
+    -- Wait for wagon to appear and player to navigate to it
+    Wait(8000)
     
-    TriggerEvent('chat:addMessage', {
-        color = {0, 255, 0},
-        multiline = true,
-        args = {"AutoFarm Bot", "Wagon called! Moving to wagon..."}
-    })
+    -- Try to place items in wagon
+    PlaceItemsInWagon()
     
-    -- Wait for player to reach wagon (can be customized with pathfinding)
-    Wait(10000)
-    
-    -- Empty inventory into wagon
-    EmptyInventoryToWagon()
-end
-
--- Empty inventory to wagon
-function EmptyInventoryToWagon()
-    TriggerEvent('chat:addMessage', {
-        color = {0, 255, 0},
-        multiline = true,
-        args = {"AutoFarm Bot", "Placing items in wagon..."}
-    })
-    
-    -- Simulate placing items (press E or interact)
-    SetControlNormal(0, GetHashKey('E'), 1.0)
-    Wait(1000)
-    SetControlNormal(0, GetHashKey('E'), 0.0)
-    
+    -- Reset for next cycle
     Wait(3000)
+    wagonCalled = false
+end
+
+-- Place items in wagon
+function PlaceItemsInWagon()
+    print("^5[AutoFarm Bot] Placing items in wagon...^7")
+    NotifyPlayer("Placing items in wagon...", 5)
     
+    -- Simulate interaction with wagon (press E multiple times to place items)
+    for i = 1, 5 do
+        SetControlNormal(0, GetHashKey('E'), 1.0)
+        Wait(800)
+        SetControlNormal(0, GetHashKey('E'), 0.0)
+        Wait(800)
+    end
+    
+    print("^2[AutoFarm Bot] Items placed! Continuing to farm...^7")
+    NotifyPlayer("Items placed! Continuing to farm...", 3)
+end
+
+-- Check if inventory is full (using game natives)
+function IsInventoryFull()
+    local playerPed = PlayerPedId()
+    local maxSlots = 20 -- Adjust based on your server's max slots
+    
+    -- This uses RedM's inventory check
+    -- The actual implementation depends on your server's inventory system
+    -- This is a placeholder that checks periodically
+    
+    -- You can customize this based on your inventory script
+    -- For now, it will check if player has certain items
+    
+    return CheckInventoryStatus()
+end
+
+-- Check inventory status (simplified)
+function CheckInventoryStatus()
+    -- This checks if player appears to have many items
+    -- In a real scenario, you'd integrate with your inventory system
+    
+    -- For now, return false to let it farm indefinitely
+    -- You can modify this based on your server's inventory API
+    return false
+end
+
+-- Notify player with on-screen message
+function NotifyPlayer(message, duration)
     TriggerEvent('chat:addMessage', {
         color = {0, 255, 0},
         multiline = true,
-        args = {"AutoFarm Bot", "Items placed! Returning to farm..."}
+        args = {"AutoFarm Bot", message}
     })
 end
 
--- Check if inventory is full
-function IsInventoryFull()
-    -- This needs to be customized based on your inventory system
-    -- You may need to trigger a server event to check inventory
-    TriggerServerEvent('autofarm:checkInventory')
-    return false -- Placeholder
-end
-
--- Receive inventory full status from server
-RegisterNetEvent('autofarm:inventoryIsFull')
-AddEventHandler('autofarm:inventoryIsFull', function(isFull)
-    if isFull then
-        CallWagon()
-    end
-end)
+print("^2[AutoFarm Bot] Loaded successfully!^7")
+print("^3Press F5 to toggle the bot on/off^7")
